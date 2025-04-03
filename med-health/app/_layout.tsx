@@ -32,9 +32,9 @@ function RootLayoutNav() {
       // Redirect based on role
       getUserRole().then((role) => {
         if (role === "doctor") {
-          router.replace("/(doctor)")
+          router.replace("/(doctor)")  // Redirect to doctor layout
         } else if (role === "patient") {
-          router.replace("/(patient)")
+          router.replace("/(patient)")  // Redirect to patient layout
         }
       })
     }
@@ -50,4 +50,3 @@ function RootLayoutNav() {
 
   return <Slot />
 }
-

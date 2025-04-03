@@ -9,7 +9,7 @@ export default function DoctorLayout() {
         tabBarInactiveTintColor: "#888",
         tabBarLabelStyle: { fontSize: 12 },
         tabBarStyle: { paddingBottom: 5, height: 60 },
-        headerShown:false
+        headerShown: false
       }}
     >
       <Tabs.Screen
@@ -50,4 +50,3 @@ export default function DoctorLayout() {
     </Tabs>
   )
 }
-

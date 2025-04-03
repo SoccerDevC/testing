@@ -1,434 +1,211 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  Image,
-  Alert,
-  ActivityIndicator
-} from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/auth-context';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
-import * as DocumentPicker from 'expo-document-picker';
-import { Audio } from 'expo-av';
-import { decode } from 'base64-arraybuffer';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-type Message = {
-  id: number;
-  sender_id: string;
-  receiver_id: string;
-  message: string;
-  media_url?: string;
-  media_type?: 'image' | 'video' | 'audio';
-  created_at: string;
+type PatientChat = {
+  id: string;
+  name: string;
+  lastMessage: string;
+  lastMessageTime: string;
+  unreadCount: number;
 };
 
-export default function DoctorChatScreen() {
-  const { patientId, patientName } = useLocalSearchParams<{ patientId: string; patientName: string }>();
+export default function MessagesScreen() {
   const { user } = useAuth();
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [newMessage, setNewMessage] = useState('');
+  const [chats, setChats] = useState<PatientChat[]>([]);
   const [loading, setLoading] = useState(true);
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [sendingMedia, setSendingMedia] = useState(false);
   const router = useRouter();
-  const flatListRef = useRef<FlatList>(null);
 
   useEffect(() => {
-    if (!user?.id || !patientId) return;
-
-    fetchMessages();
-    markMessagesAsRead();
-
-    // Subscribe to new messages
-    const subscription = supabase
-      .channel('messages')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `receiver_id=eq.${user.id}`,
-        },
-        (payload: any) => {
-          if (payload.new.sender_id === patientId) {
-            setMessages((prev) => [...prev, payload.new as Message]);
-            markMessagesAsRead();
+    if (user?.id) {
+      fetchChats();
+      
+      // Subscribe to new messages
+      const subscription = supabase
+        .channel('messages')
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages',
+            filter: `receiver_id=eq.${user.id}`,
+          },
+          () => {
+            fetchChats(); // Refresh the list when new messages arrive
           }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      subscription.unsubscribe();
-      if (recording) {
-        stopRecording();
-      }
-    };
-  }, [user, patientId]);
-
-  const fetchMessages = async () => {
-    if (!user?.id || !patientId) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*')
-        .or(
-          `and(sender_id.eq.${user.id},receiver_id.eq.${patientId}),and(sender_id.eq.${patientId},receiver_id.eq.${user.id})`
         )
-        .order('created_at', { ascending: true });
+        .subscribe();
 
-      if (error) throw error;
-      setMessages(data || []);
+      return () => {
+        subscription.unsubscribe();
+      };
+    }
+  }, [user]);
+
+  const fetchChats = async () => {
+    if (!user?.id) return;
+    
+    try {
+      // Get all patients
+      const { data: patientsData, error: patientsError } = await supabase
+        .from('users')
+        .select('id, name, email')
+        .eq('role', 'patient');
+      
+      if (patientsError) throw patientsError;
+      
+      // Get unread message counts for each patient
+      const patientIds = patientsData?.map(p => p.id) || [];
+      const unreadCounts = await Promise.all(
+        patientIds.map(async (patientId) => {
+          const { count, error } = await supabase
+            .from('messages')
+            .select('*', { count: 'exact', head: true })
+            .eq('sender_id', patientId)
+            .eq('receiver_id', user.id)
+            .eq('read', false);
+          
+          if (error) return { patientId, count: 0 };
+          return { patientId, count: count || 0 };
+        })
+      );
+      
+      // Create a map of unread counts
+      const unreadCountMap = new Map();
+      unreadCounts.forEach(item => {
+        unreadCountMap.set(item.patientId, item.count);
+      });
+      
+      // Get last message for each patient
+      const lastMessages = await Promise.all(
+        patientIds.map(async (patientId) => {
+          const { data, error } = await supabase
+            .from('messages')
+            .select('message, created_at')
+            .or(
+              `and(sender_id.eq.${user.id},receiver_id.eq.${patientId}),and(sender_id.eq.${patientId},receiver_id.eq.${user.id})`
+            )
+            .order('created_at', { ascending: false })
+            .limit(1);
+          
+          if (error || !data || data.length === 0) return { patientId, lastMessage: null, lastMessageTime: null };
+          return { 
+            patientId, 
+            lastMessage: data[0].message, 
+            lastMessageTime: data[0].created_at 
+          };
+        })
+      );
+      
+      // Create a map of last messages
+      const lastMessageMap = new Map();
+      lastMessages.forEach(item => {
+        if (item.lastMessage) {
+          lastMessageMap.set(item.patientId, {
+            message: item.lastMessage,
+            time: item.lastMessageTime
+          });
+        }
+      });
+      
+      // Combine all data
+      const chatsWithDetails = patientsData?.map(patient => ({
+        id: patient.id,
+        name: patient.name,
+        lastMessage: lastMessageMap.get(patient.id)?.message || 'No messages yet',
+        lastMessageTime: lastMessageMap.get(patient.id)?.time || '',
+        unreadCount: unreadCountMap.get(patient.id) || 0
+      })) || [];
+      
+      // Sort by unread count (desc) and then by last message time (desc)
+      chatsWithDetails.sort((a, b) => {
+        if (a.unreadCount !== b.unreadCount) {
+          return b.unreadCount - a.unreadCount;
+        }
+        
+        if (a.lastMessageTime && b.lastMessageTime) {
+          return new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime();
+        }
+        
+        return 0;
+      });
+      
+      setChats(chatsWithDetails);
     } catch (error) {
-      console.error('Error fetching messages:', error);
+      console.error('Error fetching chats:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const markMessagesAsRead = async () => {
-    if (!user?.id || !patientId) return;
-
-    try {
-      await supabase
-        .from('messages')
-        .update({ read: true })
-        .eq('sender_id', patientId)
-        .eq('receiver_id', user.id)
-        .eq('read', false);
-    } catch (error) {
-      console.error('Error marking messages as read:', error);
-    }
+  const navigateToChat = (patientId: string, patientName: string) => {
+    router.push({
+      pathname: '/doctor/chat',
+      params: { patientId, patientName }
+    });
   };
 
-  const sendMessage = async () => {
-    if (!newMessage.trim() || !user?.id || !patientId) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('messages')
-        .insert([
-          {
-            sender_id: user.id,
-            receiver_id: patientId,
-            message: newMessage.trim(),
-            read: false,
-          },
-        ])
-        .select();
-
-      if (error) throw error;
-
-      if (data && data[0]) {
-        setMessages((prev) => [...prev, data[0] as Message]);
-        setNewMessage('');
-
-        // Scroll to bottom
-        setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: true });
-        }, 100);
-      }
-    } catch (error) {
-      console.error('Error sending message:', error);
-    }
-  };
-
-  const pickImage = async () => {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.All,
-        quality: 0.8,
-        allowsEditing: true,
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0];
-        await uploadAndSendMedia(
-          asset.uri, 
-          asset.type === 'video' ? 'video' : 'image'
-        );
-      }
-    } catch (error) {
-      console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image');
-    }
-  };
-
-  const startRecording = async () => {
-    try {
-      await Audio.requestPermissionsAsync();
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
-
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      
-      setRecording(recording);
-      setIsRecording(true);
-    } catch (error) {
-      console.error('Error starting recording:', error);
-      Alert.alert('Error', 'Failed to start recording');
-    }
-  };
-
-  const stopRecording = async () => {
-    if (!recording) return;
-
-    try {
-      setIsRecording(false);
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
-      setRecording(null);
-      
-      if (uri) {
-        await uploadAndSendMedia(uri, 'audio');
-      }
-    } catch (error) {
-      console.error('Error stopping recording:', error);
-      Alert.alert('Error', 'Failed to stop recording');
-    }
-  };
-
-  const uploadAndSendMedia = async (uri: string, mediaType: 'image' | 'video' | 'audio') => {
-    if (!user?.id || !patientId) return;
-    
-    setSendingMedia(true);
-    
-    try {
-      const filename = uri.split('/').pop() || '';
-      const extension = filename.split('.').pop()?.toLowerCase() || '';
-      const contentType = 
-        mediaType === 'image' ? `image/${extension === 'jpg' ? 'jpeg' : extension}` :
-        mediaType === 'video' ? `video/${extension}` :
-        `audio/${extension === 'caf' ? 'x-caf' : extension}`;
-      
-      // Fetch the file
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      
-      // Convert to base64 for Supabase storage
-      const reader = new FileReader();
-      reader.readAsDataURL(blob);
-      
-      const base64File = await new Promise<string>((resolve, reject) => {
-        reader.onload = () => {
-          if (typeof reader.result === 'string') {
-            // Remove the data URL prefix
-            const base64 = reader.result.split(',')[1];
-            resolve(base64);
-          } else {
-            reject(new Error('Failed to convert file to base64'));
-          }
-        };
-        reader.onerror = reject;
-      });
-      
-      // Upload to Supabase Storage
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('chat-media')
-        .upload(
-          `${user.id}/${Date.now()}-${filename}`,
-          decode(base64File),
-          { contentType }
-        );
-      
-      if (uploadError) throw uploadError;
-      
-      // Get public URL
-      const { data: urlData } = await supabase.storage
-        .from('chat-media')
-        .getPublicUrl(uploadData.path);
-      
-      // Send message with media
-      const { data, error } = await supabase
-        .from('messages')
-        .insert([
-          {
-            sender_id: user.id,
-            receiver_id: patientId,
-            message: mediaType === 'audio' ? '🎤 Audio message' : 
-                     mediaType === 'video' ? '🎬 Video' : '📷 Image',
-            media_url: urlData.publicUrl,
-            media_type: mediaType,
-            read: false,
-          },
-        ])
-        .select();
-      
-      if (error) throw error;
-      
-      if (data && data[0]) {
-        setMessages((prev) => [...prev, data[0] as Message]);
-        
-        // Scroll to bottom
-        setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: true });
-        }, 100);
-      }
-    } catch (error) {
-      console.error('Error uploading media:', error);
-      Alert.alert('Error', 'Failed to send media');
-    } finally {
-      setSendingMedia(false);
-    }
-  };
-
-  const renderMessageContent = (item: Message) => {
-    if (item.media_type === 'image' && item.media_url) {
-      return (
-        <Image 
-          source={{ uri: item.media_url }} 
-          style={styles.mediaImage} 
-          resizeMode="cover"
-        />
-      );
-    } else if (item.media_type === 'video' && item.media_url) {
-      return (
-        <View style={styles.videoContainer}>
-          <Ionicons name="videocam" size={40} color="#fff" />
-          <Text style={styles.videoText}>Video</Text>
-          <TouchableOpacity style={styles.playButton}>
-            <Ionicons name="play-circle" size={50} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      );
-    } else if (item.media_type === 'audio' && item.media_url) {
-      return (
-        <View style={styles.audioContainer}>
-          <Ionicons name="musical-note" size={24} color="#fff" />
-          <Text style={styles.audioText}>Audio Message</Text>
-          <TouchableOpacity style={styles.playAudioButton}>
-            <Ionicons name="play" size={20} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      );
-    } else {
-      return (
-        <Text style={[
-          styles.messageText, 
-          item.sender_id === user?.id ? styles.myMessageText : styles.theirMessageText
-        ]}>
-          {item.message}
-        </Text>
-      );
-    }
-  };
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#4a90e2" />
+      </View>
+    );
+  }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-    >
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>{patientName}</Text>
-        </View>
-
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#4a90e2" />
-          </View>
-        ) : (
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            keyExtractor={(item) => item.id.toString()}
-            contentContainerStyle={styles.messagesList}
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
-            renderItem={({ item }) => {
-              const isMe = item.sender_id === user?.id;
-              return (
-                <View style={[
-                  styles.messageBubble, 
-                  isMe ? styles.myMessage : styles.theirMessage,
-                  item.media_type ? styles.mediaBubble : null
-                ]}>
-                  {renderMessageContent(item)}
-                  <Text style={[
-                    styles.messageTime,
-                    isMe ? styles.myMessageTime : styles.theirMessageTime
-                  ]}>
-                    {new Date(item.created_at).toLocaleTimeString([], { 
-                      hour: '2-digit', 
-                      minute: '2-digit' 
-                    })}
-                  </Text>
-                </View>
-              );
-            }}
-          />
-        )}
-
-        <View style={styles.inputContainer}>
-          <View style={styles.inputRow}>
-            <TouchableOpacity style={styles.mediaButton} onPress={pickImage}>
-              <Ionicons name="image" size={24} color="#4a90e2" />
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.mediaButton}
-              onPressIn={startRecording}
-              onPressOut={stopRecording}
-            >
-              <Ionicons 
-                name="mic" 
-                size={24} 
-                color={isRecording ? "#FF5252" : "#4a90e2"} 
-              />
-            </TouchableOpacity>
-            
-            <TextInput
-              style={styles.input}
-              placeholder="Type a message..."
-              value={newMessage}
-              onChangeText={setNewMessage}
-              multiline
-              editable={!sendingMedia}
-            />
-            
-            {sendingMedia ? (
-              <View style={styles.sendButton}>
-                <ActivityIndicator size="small" color="#fff" />
-              </View>
-            ) : (
-              <TouchableOpacity
-                style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
-                onPress={sendMessage}
-                disabled={!newMessage.trim() || sendingMedia}
-              >
-                <Ionicons name="send" size={24} color="#fff" />
-              </TouchableOpacity>
-            )}
-          </View>
-          
-          {isRecording && (
-            <View style={styles.recordingIndicator}>
-              <View style={styles.recordingDot} />
-              <Text style={styles.recordingText}>Recording audio...</Text>
-            </View>
-          )}
-        </View>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Messages</Text>
       </View>
-    </KeyboardAvoidingView>
+      
+      <FlatList
+        data={chats}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <TouchableOpacity 
+            style={styles.chatItem}
+            onPress={() => navigateToChat(item.id, item.name)}
+          >
+            <View style={styles.avatarContainer}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {item.name.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              {item.unreadCount > 0 && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{item.unreadCount}</Text>
+                </View>
+              )}
+            </View>
+            
+            <View style={styles.chatInfo}>
+              <View style={styles.chatHeader}>
+                <Text style={styles.chatName}>{item.name}</Text>
+                <Text style={styles.chatTime}>
+                  {item.lastMessageTime ? new Date(item.lastMessageTime).toLocaleDateString() : ''}
+                </Text>
+              </View>
+              <Text style={styles.lastMessage} numberOfLines={1}>
+                {item.lastMessage}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        )}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Ionicons name="chatbubbles-outline" size={64} color="#ccc" />
+            <Text style={styles.emptyText}>No messages yet</Text>
+          </View>
+        }
+      />
+    </SafeAreaView>
   );
 }
 
@@ -437,158 +214,93 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
-  header: {
-    backgroundColor: '#4a90e2',
-    padding: 20,
-    paddingTop: 60,
-    flexDirection: 'row',
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  backButton: {
-    marginRight: 16,
+  header: {
+    backgroundColor: '#4a90e2',
+    padding: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: '#fff',
   },
-  loadingContainer: {
-    flex: 1,
+  chatItem: {
+    flexDirection: 'row',
+    padding: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  avatarContainer: {
+    position: 'relative',
+    marginRight: 16,
+  },
+  avatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#4a90e2',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  messagesList: {
-    padding: 16,
-    paddingBottom: 16,
-  },
-  messageBubble: {
-    maxWidth: '80%',
-    padding: 12,
-    borderRadius: 16,
-    marginBottom: 8,
-  },
-  mediaBubble: {
-    padding: 4,
-    overflow: 'hidden',
-  },
-  myMessage: {
-    alignSelf: 'flex-end',
-    backgroundColor: '#4a90e2',
-    borderBottomRightRadius: 4,
-  },
-  theirMessage: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#fff',
-    borderBottomLeftRadius: 4,
-  },
-  messageText: {
-    fontSize: 16,
-  },
-  myMessageText: {
+  avatarText: {
+    fontSize: 20,
+    fontWeight: 'bold',
     color: '#fff',
   },
-  theirMessageText: {
+  badge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#FF5252',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  chatInfo: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  chatHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  chatName: {
+    fontSize: 16,
+    fontWeight: 'bold',
     color: '#333',
   },
-  messageTime: {
-    fontSize: 10,
-    marginTop: 4,
-    alignSelf: 'flex-end',
-    opacity: 0.7,
-  },
-  myMessageTime: {
-    color: '#f0f0f0',
-  },
-  theirMessageTime: {
+  chatTime: {
+    fontSize: 12,
     color: '#999',
   },
-  inputContainer: {
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-  },
-  inputRow: {
-    flexDirection: 'row',
-    padding: 12,
-    alignItems: 'center',
-  },
-  mediaButton: {
-    padding: 8,
-    marginRight: 4,
-  },
-  input: {
-    flex: 1,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    maxHeight: 120,
-    marginRight: 8,
-  },
-  sendButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#4a90e2',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sendButtonDisabled: {
-    backgroundColor: '#b0c4de',
-  },
-  mediaImage: {
-    width: 200,
-    height: 200,
-    borderRadius: 12,
-  },
-  videoContainer: {
-    width: 200,
-    height: 150,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  videoText: {
-    color: '#fff',
-    marginTop: 8,
-  },
-  playButton: {
-    position: 'absolute',
-  },
-  audioContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 8,
-  },
-  audioText: {
-    color: '#fff',
-    marginLeft: 8,
-    marginRight: 8,
-  },
-  playAudioButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  recordingIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 8,
-    backgroundColor: '#ffebee',
-  },
-  recordingDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#FF5252',
-    marginRight: 8,
-  },
-  recordingText: {
-    color: '#FF5252',
+  lastMessage: {
     fontSize: 14,
+    color: '#666',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#999',
+    marginTop: 16,
   },
 });

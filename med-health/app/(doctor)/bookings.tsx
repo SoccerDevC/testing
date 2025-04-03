@@ -1,12 +1,22 @@
-"use client"
-
-import { useState, useEffect } from "react"
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from "react-native"
-import { useAuth } from "../../context/auth-context"
-import { supabase } from "../../lib/supabase"
+import React, { useState, useEffect } from "react"
+import {
+  View,
+  Text,
+  FlatList,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+} from "react-native"
+import { useNavigation } from "@react-navigation/native"
 import { Ionicons } from "@expo/vector-icons"
+import { SafeAreaView } from "react-native-safe-area-context"
 import DateTimePicker from "@react-native-community/datetimepicker"
 
+import { useAuth } from "@/context/auth-context"
+import { supabase } from "@/lib/supabase"
+
+// Define proper types
 type Appointment = {
   id: number
   patient_id: string
@@ -16,7 +26,11 @@ type Appointment = {
   payment_method: string | null
 }
 
-export default function DoctorBookingsScreen() {
+type UserData = {
+  name: string
+}
+
+const DoctorBookingsScreen = () => {
   const { user } = useAuth()
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [loading, setLoading] = useState(true)
@@ -34,23 +48,27 @@ export default function DoctorBookingsScreen() {
     try {
       const { data, error } = await supabase
         .from("appointments")
-        .select(`
+        .select(
+          `
           id,
           patient_id,
           date,
           status,
           payment_method,
-          users:patient_id (name)
-        `)
+          users!appointments_patient_id_fkey (name)
+        `
+        )
         .eq("doctor_id", user.id)
+        .in("status", ["upcoming", "rescheduled", "payment_pending"]) // Only fetch active appointments
         .order("date", { ascending: true })
 
       if (error) throw error
 
-      const formattedAppointments = data.map((item) => ({
+      // Properly type the data and handle the nested users object
+      const formattedAppointments: Appointment[] = data.map((item: any) => ({
         id: item.id,
         patient_id: item.patient_id,
-        patient_name: item.users?.name || "Unknown Patient",
+        patient_name: item.users ? item.users.name : "Unknown Patient",
         date: item.date,
         status: item.status,
         payment_method: item.payment_method,
@@ -115,8 +133,8 @@ export default function DoctorBookingsScreen() {
 
       if (error) throw error
 
-      // Update local state
-      setAppointments((prev) => prev.map((app) => (app.id === appointmentId ? { ...app, status: "canceled" } : app)))
+      // Update local state by removing the canceled appointment
+      setAppointments((prev) => prev.filter((app) => app.id !== appointmentId))
 
       Alert.alert("Success", "Appointment canceled successfully")
     } catch (error) {
@@ -144,10 +162,8 @@ export default function DoctorBookingsScreen() {
 
       if (error) throw error
 
-      // Update local state
-      setAppointments((prev) =>
-        prev.map((app) => (app.id === appointmentId ? { ...app, status: "payment_completed" } : app)),
-      )
+      // Update local state by removing the completed appointment
+      setAppointments((prev) => prev.filter((app) => app.id !== appointmentId))
 
       Alert.alert("Success", "Payment marked as completed")
     } catch (error) {
@@ -162,14 +178,8 @@ export default function DoctorBookingsScreen() {
         return "#4caf50"
       case "rescheduled":
         return "#ff9800"
-      case "canceled":
-        return "#f44336"
-      case "completed":
-        return "#2196f3"
       case "payment_pending":
         return "#9c27b0"
-      case "payment_completed":
-        return "#009688"
       default:
         return "#757575"
     }
@@ -206,22 +216,18 @@ export default function DoctorBookingsScreen() {
       </View>
 
       <View style={styles.actionButtons}>
-        {item.status !== "canceled" && item.status !== "completed" && (
-          <>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.rescheduleButton]}
-              onPress={() => handleReschedule(item)}
-            >
-              <Ionicons name="calendar" size={16} color="#fff" />
-              <Text style={styles.actionButtonText}>Reschedule</Text>
-            </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.actionButton, styles.rescheduleButton]}
+          onPress={() => handleReschedule(item)}
+        >
+          <Ionicons name="calendar" size={16} color="#fff" />
+          <Text style={styles.actionButtonText}>Reschedule</Text>
+        </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.actionButton, styles.cancelButton]} onPress={() => handleCancel(item)}>
-              <Ionicons name="close-circle" size={16} color="#fff" />
-              <Text style={styles.actionButtonText}>Cancel</Text>
-            </TouchableOpacity>
-          </>
-        )}
+        <TouchableOpacity style={[styles.actionButton, styles.cancelButton]} onPress={() => handleCancel(item)}>
+          <Ionicons name="close-circle" size={16} color="#fff" />
+          <Text style={styles.actionButtonText}>Cancel</Text>
+        </TouchableOpacity>
 
         {item.status === "payment_pending" && (
           <TouchableOpacity
@@ -237,23 +243,29 @@ export default function DoctorBookingsScreen() {
   )
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
-        <Text style={styles.title}>Appointments</Text>
+        <Text style={styles.title}>Available Appointments</Text>
       </View>
 
-      <FlatList
-        data={appointments}
-        keyExtractor={(item) => item.id.toString()}
-        renderItem={renderAppointmentItem}
-        contentContainerStyle={styles.listContainer}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Ionicons name="calendar-outline" size={64} color="#ccc" />
-            <Text style={styles.emptyText}>No appointments found</Text>
-          </View>
-        }
-      />
+      {loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#4a90e2" />
+        </View>
+      ) : (
+        <FlatList
+          data={appointments}
+          keyExtractor={(item) => item.id.toString()}
+          renderItem={renderAppointmentItem}
+          contentContainerStyle={styles.listContainer}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="calendar-outline" size={64} color="#ccc" />
+              <Text style={styles.emptyText}>No available appointments found</Text>
+            </View>
+          }
+        />
+      )}
 
       {showDatePicker && (
         <View style={styles.datePickerContainer}>
@@ -284,7 +296,7 @@ export default function DoctorBookingsScreen() {
           </TouchableOpacity>
         </View>
       )}
-    </View>
+    </SafeAreaView>
   )
 }
 
@@ -296,12 +308,18 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: "#4a90e2",
     padding: 20,
-    paddingTop: 60,
+    paddingTop: 12,
+    paddingBottom: 12,
   },
   title: {
     fontSize: 24,
     fontWeight: "bold",
     color: "#fff",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
   },
   listContainer: {
     padding: 16,
@@ -381,6 +399,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     padding: 32,
+    flex: 1,
   },
   emptyText: {
     fontSize: 16,
@@ -427,3 +446,4 @@ const styles = StyleSheet.create({
   },
 })
 
+export default DoctorBookingsScreen

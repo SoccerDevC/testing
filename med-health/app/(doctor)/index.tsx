@@ -88,23 +88,7 @@ export default function DoctorHomeScreen() {
 
       if (countError) throw countError;
 
-      // Format the data
-      const formattedAppointments = (appointmentsData as AppointmentData[]).map(item => ({
-        id: item.id,
-        patient_name: item.users?.name || 'Unknown Patient',
-        date: new Date(item.date).toLocaleString(),
-        status: item.status
-      }));
-
-      const formattedMessages = (messagesData as MessageData[]).map(item => ({
-        id: item.id,
-        sender_name: item.users?.name || 'Unknown Sender',
-        message: item.message,
-        created_at: new Date(item.created_at).toLocaleString()
-      }));
-
-      setAppointments(formattedAppointments);
-      setMessages(formattedMessages);
+    
       setPatientCount(count || 0);
     } catch (error) {
       console.error('Error fetching data:', error);
