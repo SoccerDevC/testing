@@ -9,6 +9,7 @@ export default function PatientLayout() {
         tabBarInactiveTintColor: "#888",
         tabBarLabelStyle: { fontSize: 12 },
         tabBarStyle: { paddingBottom: 5, height: 60 },
+        headerShown: false, 
       }}
     >
       <Tabs.Screen
