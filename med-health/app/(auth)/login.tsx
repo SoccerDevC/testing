@@ -2,14 +2,15 @@
 
 import { useState } from "react"
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from "react-native"
-import { useAuth } from "../../context/auth-context"
-import { Link } from "expo-router"
+import { useAuth } from "@/context/auth-context"
+import { Link, useRouter } from "expo-router"
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const { signIn } = useAuth()
+  const router = useRouter()
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -18,11 +19,27 @@ export default function LoginScreen() {
     }
 
     setLoading(true)
-    const { error } = await signIn(email, password)
-    setLoading(false)
+    try {
+      const { error, userRole } = await signIn(email, password)
 
-    if (error) {
-      Alert.alert("Error", error.message)
+      if (error) {
+        Alert.alert("Error", error.message)
+      } else if (userRole) {
+        // Redirect based on role
+        if (userRole === "doctor") {
+          router.replace("/(doctor)")
+        } else {
+          router.replace("/(patient)")
+        }
+      } else {
+        // User authenticated but no role found
+        Alert.alert("Error", "User account found but role not assigned. Please contact support.")
+      }
+    } catch (err) {
+      Alert.alert("Error", "An unexpected error occurred")
+      console.error(err)
+    } finally {
+      setLoading(false)
     }
   }
 
