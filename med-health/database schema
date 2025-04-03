@@ -1,0 +1,80 @@
+-- Drop existing tables in the correct order (respecting dependencies)
+DROP TABLE IF EXISTS articles CASCADE;
+DROP TABLE IF EXISTS appointments CASCADE;
+DROP TABLE IF EXISTS messages CASCADE;
+DROP TABLE IF EXISTS patient_verification CASCADE;
+DROP TABLE IF EXISTS doctors CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+
+-- Users Table
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('doctor', 'patient')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- Patient Verification Table
+CREATE TABLE patient_verification (
+    id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    medical_history TEXT,
+    allergies TEXT,
+    current_medications TEXT,
+    emergency_contact TEXT,
+    verified BOOLEAN DEFAULT FALSE
+);
+
+-- Doctors Table (Extended Info)
+CREATE TABLE doctors (
+    id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    specialty TEXT NOT NULL,
+    experience TEXT NOT NULL
+);
+
+-- Messages Table
+CREATE TABLE messages (
+    id SERIAL PRIMARY KEY,
+    sender_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    receiver_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    message TEXT NOT NULL,
+    read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- Appointments Table
+CREATE TABLE appointments (
+    id SERIAL PRIMARY KEY,
+    patient_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    doctor_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    date TIMESTAMP WITH TIME ZONE NOT NULL,
+    status TEXT CHECK (status IN ('upcoming', 'rescheduled', 'canceled', 'completed', 'payment_pending', 'payment_completed')) DEFAULT 'upcoming',
+    payment_method TEXT CHECK (payment_method IN ('mobile_money', 'online_payment', NULL)),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- Articles Table
+CREATE TABLE articles (
+    id SERIAL PRIMARY KEY,
+    doctor_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    image_url TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- Insert sample doctors with properly formatted UUIDs
+INSERT INTO users (id, email, name, role) VALUES 
+('d1b9ef1a-6b5a-4c0e-8b0c-3d5c4e6f7a8b', 'KMartini848@gmail.com', 'Dr. Kato Martin', 'doctor'),
+('e2c0f2b1-7c6b-5d1f-9c1d-4e6f7a8b9c0d', 'gnkyeyune@gmail.com', 'Dr. Grace Nambatya', 'doctor');
+
+-- Insert doctor specialties
+INSERT INTO doctors (id, specialty, experience) VALUES 
+('d1b9ef1a-6b5a-4c0e-8b0c-3d5c4e6f7a8b', 'Emergency Medicine', '15 years of experience in trauma and emergency care'),
+('e2c0f2b1-7c6b-5d1f-9c1d-4e6f7a8b9c0d', 'Herbal Medicine', '20 years of experience in traditional and herbal medicine');
+
+-- Insert sample articles
+INSERT INTO articles (doctor_id, title, content, image_url) VALUES
+('d1b9ef1a-6b5a-4c0e-8b0c-3d5c4e6f7a8b', 'Emergency First Aid Tips', 'In emergency situations, remember the ABC principle: Airway, Breathing, and Circulation. First, ensure the airway is clear. Second, check if the person is breathing. Third, check for a pulse to confirm circulation. If any of these are compromised, begin appropriate first aid measures immediately.', NULL),
+('e2c0f2b1-7c6b-5d1f-9c1d-4e6f7a8b9c0d', 'Benefits of Herbal Medicine', 'Herbal medicine has been used for centuries across different cultures. Many herbs contain powerful compounds that can help with various health conditions. Always consult with a qualified herbalist before starting any herbal treatment regimen.', NULL),
+('d1b9ef1a-6b5a-4c0e-8b0c-3d5c4e6f7a8b', 'Recognizing Stroke Symptoms', 'Remember the FAST method to identify stroke symptoms: Face drooping, Arm weakness, Speech difficulties, and Time to call emergency services. Quick action can save lives and reduce long-term effects.', NULL);
