@@ -12,6 +12,7 @@ import {
 import { useAuth } from '../../context/auth-context';
 import { supabase } from '../../lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from "expo-router";
 
 type VerificationData = {
   medical_history: string;
@@ -35,7 +36,9 @@ export default function PatientHomeScreen() {
   });
   const [upcomingAppointments, setUpcomingAppointments] = useState([]);
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const router = useRouter();
 
+  
   useEffect(() => {
     if (user?.id) {
       checkVerificationStatus();
@@ -286,10 +289,15 @@ export default function PatientHomeScreen() {
           <View style={styles.quickActionsContainer}>
             <Text style={styles.quickActionsTitle}>Quick Actions</Text>
             <View style={styles.actionsGrid}>
-              <TouchableOpacity style={styles.actionCard}>
+
+                <TouchableOpacity
+                style={styles.actionCard}
+                onPress={() => router.push('/book')} // or '/(tabs)/book' if it's nested
+                >
                 <Ionicons name="calendar" size={32} color="#4a90e2" />
                 <Text style={styles.actionText}>Book Appointment</Text>
-              </TouchableOpacity>
+                </TouchableOpacity>
+
               <TouchableOpacity style={styles.actionCard}>
                 <Ionicons name="chatbubbles" size={32} color="#4a90e2" />
                 <Text style={styles.actionText}>Message Doctor</Text>

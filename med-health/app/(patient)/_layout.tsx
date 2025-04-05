@@ -19,6 +19,13 @@ export default function PatientLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="home" size={size} color={color} />,
         }}
       />
+      <Tabs.Screen
+        name="bookings"
+        options={{
+          title: "Book",
+          tabBarIcon: ({ color, size }) => <Ionicons name="calendar" size={size} color={color} />,
+        }}
+      />
         <Tabs.Screen
         name="more"
         options={{
