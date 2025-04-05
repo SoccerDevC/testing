@@ -5,7 +5,7 @@ export default function DoctorDashboard() {
     
     return (
         <View>
-            <Text>Hello</Text>
+            <Text>Doc</Text>
         </View>
 
     );
